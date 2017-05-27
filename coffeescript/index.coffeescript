@@ -1,0 +1,405 @@
+mainSvgEl = document.querySelector '#svg'
+paper = Snap '#svg'
+
+getFieldSettings = ->
+	elemStyle = getComputedStyle mainSvgEl
+	settings =
+		width: (parseInt elemStyle.width) ? 600
+		height: (parseInt elemStyle.height) ? 600
+		numOfRows: 6
+		numOfCols: 6
+		circleRad: 30
+		lineColor:'#000'
+		pseudoLineColor:'#ddd'
+	s = settings
+	s.innerCircleRad = s.circleRad / 4
+	s.lineWidth = Math.min(s.width / s.numOfRows, s.height / s.numOfCols) / 10
+	s.cellWidth = (s.width - s.lineWidth * (s.numOfRows + 1)) / s.numOfRows
+	s.cellHeight = (s.height - s.lineWidth * (s.numOfCols + 1)) / s.numOfCols
+	s.clickedCircleRad = s.circleRad * 0.6
+	return settings
+
+field = getFieldSettings()
+
+getGameSettings = ->
+	game =
+		numOfPlayers: 2
+		playersColors: [
+			'#CC0000'
+			'#4682B4'
+		]
+		nameOfPlayers: [
+			'THE RED ONE'
+			'THE BLUE ONE'
+		]
+		defaultPlayerColor: '#708090'
+		roundDuration: 30 # Seconds
+		firstMove: 1
+
+game = getGameSettings()
+
+getGameState = ->
+	gs = gameState = {}
+	gs.turn = game.firstMove
+	gs.capturedCells = []
+	for i in [1..game.numOfPlayers]
+		gs.capturedCells[i] = 0
+	gs.update = ->
+		gs.capturedCells[gs.turn]++
+		do banners[gs.turn].updateScore
+	gs.changeTurn = ->
+		banners.changeTurn gs.turn
+		if ++gs.turn > game.numOfPlayers then gs.turn = 1
+	return gameState
+
+gameState = getGameState()
+
+banners = []
+
+class Banner
+	count = 0
+	constructor: (bannerStyle) ->
+		@textStyle = styles.textStyle
+		svgEl = document.getElementById "player#{++count}"
+		width = @width = svgEl.style.width = 100
+		height = @height = svgEl.style.height = 200
+		sw = bannerStyle.strokeWidth ? 0
+		@paper = Snap svgEl
+		@banner = @paper
+			.path "M #{sw/2},#{sw/2} L #{width-sw/2},#{sw/2} L #{width-sw/2},#{3*height/4-sw/2}
+				L #{(width)/2},#{height-sw} L #{sw/2},#{3*height/4-sw/2} Z"
+			.attr bannerStyle
+		unless count == game.firstMove
+			@banner.attr {opacity: 0.4}
+		@score = @paper
+			.text width/2, height/2, "0"
+			.attr @textStyle
+
+	updateScore: ->
+		gs = gameState
+		turn = gs.turn
+		@score.stop().animate {opacity: 0}, 200, mina.easeinout, =>
+			@score.remove()
+			@score = @paper
+				.text @width/2, @height/2, gs.capturedCells[turn]
+				.attr @textStyle
+				.stop()
+				.animate {opacity: 1}, 500, mina.easeinout
+
+banners.changeTurn = (turn) ->
+	@[turn].banner
+		.stop()
+		.animate {opacity: 0.4}, 500, mina.easeinout
+	if ++turn > game.numOfPlayers then turn = 1
+	@[turn].banner
+		.stop()
+		.animate {opacity: 1}, 500, mina.easeinout
+
+cellWasCaptured = no
+
+class Cell
+	constructor: (@i, @j, @countOfSides = 0, @owner = null) ->
+		@rect = {}
+
+	update: ->
+		if ++@countOfSides == 4
+			@owner = gameState.turn
+			cellWasCaptured = on
+			do @paintCell
+			do gameState.update
+
+	paintCell: ->
+		@rect
+			.stop()
+			.animate styles.playersCellStyle[@owner-1], 500, mina.easeinout
+
+class Node
+	constructor: (@i, @j, @top = no, @rgt = no, @btm = no, @lft = no) ->
+		@links = []
+		@count = 0
+
+	update: (link) ->
+		@[link] = on
+		@count++
+		f = field
+		i = currentNode.i
+		j = currentNode.j
+		switch link
+			when "top"
+				do cells[i][j].update
+				do cells[i][j+1].update
+				unless i == 1
+					nodes[i-1][j].btm = on
+					nodes[i-1][j].count++
+			when "rgt"
+				do cells[i][j+1].update
+				do cells[i+1][j+1].update
+				unless f.numOfCols == j+1
+					nodes[i][j+1].lft = on
+					nodes[i][j+1].count++
+			when "btm"
+				do cells[i+1][j].update
+				do cells[i+1][j+1].update
+				unless i+1 == f.numOfRows
+					nodes[i+1][j].top = on
+					nodes[i+1][j].count++
+			when "lft"
+				do cells[i][j].update
+				do cells[i+1][j].update
+				unless j == 1
+					nodes[i][j-1].rgt = on
+					nodes[i][j-1].count++
+
+initCells = ->
+	cells = []
+	rows = field.numOfRows
+	cols = field.numOfCols
+	for i in [1..rows]
+		cells[i] = []
+		for j in [1..cols]
+			cell = cells[i][j] = new Cell i, j
+			if i == 1 or i == rows then cell.countOfSides++
+			if j == 1 or j == cols then cell.countOfSides++
+	cells
+
+cells = initCells()
+
+initNodes = ->
+	nodes = []
+	rows = field.numOfRows
+	cols = field.numOfCols
+	for i in [1...rows]
+		nodes[i] = []
+		for j in [1...cols]
+			nodes[i][j] = new Node i, j
+	nodes
+
+nodes = initNodes()
+
+getStyles = ->
+	s = styles = {}
+	f = field
+	g = game
+
+	s.rectStyle =
+		"fill-opacity": 0
+		stroke: f.lineColor
+		strokeWidth: f.lineWidth
+
+	s.pseudoRectStyle =
+		"fill-opacity": 0
+		strokeWidth: 0
+
+	s.pseudoLineStyle =
+		strokeWidth: f.lineWidth
+		stroke: f.pseudoLineColor
+		"stroke-opacity": 0.6
+
+	s.lineStyle =
+		strokeWidth: f.lineWidth
+		stroke: f.lineColor
+		"stroke-opacity": 1
+
+	s.circleStyle =
+		strokeWidth: 0
+		fill: f.pseudoLineColor
+		"fill-opacity": 0
+
+	s.smallCircleStyle =
+		strokeWidth: 0
+		fill: f.lineColor
+
+	s.textStyle =
+		fill: '#fff'
+		stroke: '#aaa'
+		fontSize: '60px'
+		opacity: 1
+		"text-anchor": "middle"
+
+	s.playersCellStyle = []
+	for i in [0...g.numOfPlayers]
+		s.playersCellStyle[i] =
+			fill: g.playersColors[i]
+			"fill-opacity": 1
+
+	s.bannersStyle = []
+	for i in [0...g.numOfPlayers]
+		s.bannersStyle[i] =
+			fill: g.playersColors[i]
+			strokeWidth: 10
+			stroke: '#eee'
+
+	styles
+
+styles = getStyles()
+
+drawBanners = ->
+	for i in [0...game.numOfPlayers]
+		banners[i+1] = new Banner styles.bannersStyle[i]
+
+drawBanners()
+
+drawLine = (x,y,x1,y1,style) ->
+	paper.path "M #{x},#{y} L #{x1},#{y1}"
+		.attr style
+
+drawField = ->
+	f = field
+
+	#Cells
+	rows = field.numOfRows
+	cols = field.numOfCols
+	for i in [1..rows]
+		for j in [1..cols]
+			x = (j-1)*(f.cellWidth + f.lineWidth) + f.lineWidth/2
+			y = (i-1)*(f.cellHeight + f.lineWidth) + f.lineWidth/2
+			width = f.cellWidth + f.lineWidth
+			height = f.cellHeight + f.lineWidth
+			cells[i][j].rect = paper
+				.rect x, y, width, height
+				.attr styles.pseudoRectStyle
+
+	# Horizontal lines
+	for i in [1...f.numOfRows]
+		y = i*(f.cellHeight+f.lineWidth) + f.lineWidth/2
+		for j in [1..f.numOfCols]
+			x = (j-1)*(f.cellWidth + f.lineWidth) + f.lineWidth/2
+			xx = x + (f.cellWidth + f.lineWidth)
+			line = drawLine x, y, xx, y, styles.pseudoLineStyle
+			unless j == f.numOfCols
+				nodes[i][j].links['lft'] = line
+			unless j == 1
+				nodes[i][j-1].links['rgt'] = line
+
+	# Vertical lines
+	for j in [1...f.numOfCols]
+		x = j*(f.cellWidth+f.lineWidth) + f.lineWidth/2
+		for i in [1..f.numOfRows]
+			y = (i-1)*(f.cellHeight + f.lineWidth) + f.lineWidth/2
+			yy = y + (f.cellWidth + f.lineWidth)
+			line = drawLine x, y, x, yy, styles.pseudoLineStyle
+			unless i == f.numOfRows
+				nodes[i][j].links['top'] = line
+			unless i == 1
+				nodes[i-1][j].links['btm'] = line
+
+	f.rect = paper
+		.rect f.lineWidth/2, f.lineWidth/2, f.width-f.lineWidth, f.height-f.lineWidth
+		.attr styles.rectStyle
+	return
+
+do drawField
+
+nodeWasClicked = no
+currentNode = {}
+
+tempLine = []
+link = previousLink = null
+mouseMoveHandler = (e) -> # After click node
+	f = field
+	xx = e.offsetX
+	yy = e.offsetY
+	x = currentNode.x
+	y = currentNode.y
+	dx = xx - x
+	dy = yy - y
+	link =
+		(if dx > 0 and dy < 0
+			if Math.abs(dx) > Math.abs(dy) then "rgt" else "top"
+		else
+			if dx > 0 and dy > 0
+				if Math.abs(dx) > Math.abs(dy) then "rgt" else "btm"
+			else
+				if dx < 0 and dy > 0
+					if Math.abs(dx) > Math.abs(dy) then "lft" else "btm"
+				else
+					if dx < 0 and dy < 0
+						if Math.abs(dx) > Math.abs(dy) then "lft" else "top")
+	if previousLink == link or not link? then return
+	unless previousLink == null or currentNode[previousLink]
+		tempLine.attr styles.pseudoLineStyle
+	tempLine = currentNode.links[link]
+	unless currentNode[link]
+		tempLine.attr styles.lineStyle
+	previousLink = link
+	return
+
+mouseClickConfirmHandler = (e) ->
+	if link == null or currentNode[link] then return
+	currentNode.update link
+	unless cellWasCaptured then do gameState.changeTurn
+	else cellWasCaptured = no
+	currentNode.group.innerCircle
+		.stop()
+		.animate {r:field.innerCircleRad}, 100, mina.easeinout
+	nodeWasClicked = no
+	link = previousLink = null
+	tempLine = previousTempLine = []
+	currentNode = {}
+	paper.unmousemove mouseMoveHandler
+	paper.unclick mouseClickConfirmHandler
+	return
+
+mouseClickCancelHandler = (e) ->
+	e.preventDefault()
+	unless nodeWasClicked then return
+	unless link == null or currentNode[link]
+		tempLine.attr styles.pseudoLineStyle
+	currentNode.group.innerCircle
+		.stop()
+		.animate {r:field.innerCircleRad}, 100, mina.easeinout
+	nodeWasClicked = no
+	link = previousLink = null
+	tempLine = previousTempLine = []
+	currentNode = {}
+	paper.unmousemove mouseMoveHandler
+	paper.unclick mouseClickConfirmHandler
+
+mainSvgEl.addEventListener 'contextmenu', mouseClickCancelHandler
+
+mouseClickNodeHandler = (e) ->
+	unless link == null then return
+	if @containedNode.count == 4 then return
+	@innerCircle.stop().animate {r:field.clickedCircleRad}, 100, mina.elastic
+	nodeWasClicked = on
+	currentNode = @containedNode
+	paper.mousemove mouseMoveHandler
+	paper.click mouseClickConfirmHandler
+	return
+
+mouseOverNodeHandler = ->
+	if @containedNode.count == 4 then return
+	unless nodeWasClicked
+		@innerCircle.stop().animate {r:field.clickedCircleRad}, 300, mina.elastic
+
+mouseOutNodeHandler = ->
+	if @containedNode.count == 4 then return
+	unless nodeWasClicked
+		@innerCircle.stop().animate {r:field.innerCircleRad}, 100, mina.easeinout
+
+createNodes = ->
+	f = field
+	for i in [1...f.numOfRows]
+		y = i*(f.cellHeight+f.lineWidth) + f.lineWidth/2
+		for j in [1...f.numOfCols]
+			x = j*(f.cellWidth+f.lineWidth) + f.lineWidth/2
+			circle = paper.circle x, y, f.circleRad
+				.attr styles.circleStyle
+			innerCircle = paper.circle x, y, f.innerCircleRad
+				.attr styles.smallCircleStyle
+
+			group = paper.g circle, innerCircle
+			group.innerCircle = innerCircle
+			group.containedNode = nodes[i][j]
+			nodes[i][j].group = group
+			group.containedNode.x = x
+			group.containedNode.y = y
+
+			group.mouseover mouseOverNodeHandler
+
+			group.mouseout mouseOutNodeHandler
+
+			group.click mouseClickNodeHandler
+	return
+
+do createNodes
